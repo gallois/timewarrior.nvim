@@ -2,6 +2,12 @@ local Popup = require("nui.popup")
 local NuiText = require("nui.text")
 local event = require("nui.utils.autocmd").event
 
+local pickers = require("telescope.pickers")
+local finders = require("telescope.finders")
+local conf = require("telescope.config").values
+local actions = require("telescope.actions")
+local action_state = require("telescope.actions.state")
+
 local M = {}
 
 M.config = {
@@ -172,6 +178,43 @@ M.tags = function(opts, width, height)
   })
 end
 
+local function get_tags(command)
+  local result = vim.fn.systemlist(command)
+
+  local tags = {}
+  for _, line in ipairs(result) do
+    if line ~= "" then
+      table.insert(tags, line)
+    end
+  end
+
+  return tags
+end
+
+M.track_tag = function(opts)
+  local sorter = ':' .. opts
+  local command = "timew tags " .. sorter .. " | awk 'NR > 3 && /.+/ { print $1 }'"
+  local tags = get_tags(command)
+
+  pickers.new({}, {
+    prompt_title = "tags",
+    finder = finders.new_table({ results = tags }),
+    sorter = conf.generic_sorter(opts),
+    attach_mappings = function(prompt_bufnr, map)
+      actions.select_default:replace(function()
+        local selection = action_state.get_selected_entry()
+        if selection then
+          local result = selection.value
+          vim.fn.system("timew track " .. vim.fn.shellescape(result))
+          print("Tracking: " .. result)
+        end
+        actions.close(prompt_bufnr)
+      end)
+      return true
+    end,
+  }):find()
+end
+
 M.setup = function(config)
   vim.api.nvim_create_user_command("TimewSummary", function(opts)
     local hint = opts.fargs[1] and opts.fargs[1] or M.config.summary_hint
@@ -186,6 +229,16 @@ M.setup = function(config)
   vim.api.nvim_create_user_command("TimewTags", function(opts)
     local hint = opts.fargs[1] and opts.fargs[1] or M.config.tags_hint
     M.tags(hint, M.config.size.width / 2, M.config.size.height)
+  end, {
+    nargs = '?',
+    complete = function(_, _, _)
+      return M.range_hints
+    end,
+  })
+
+  vim.api.nvim_create_user_command("TimewTrackTag", function(opts)
+    local hint = opts.fargs[1] and opts.fargs[1] or M.config.tags_hint
+    M.track_tag(hint)
   end, {
     nargs = '?',
     complete = function(_, _, _)
