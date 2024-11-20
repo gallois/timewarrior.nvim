@@ -215,6 +215,10 @@ M.track_tag = function(opts)
   }):find()
 end
 
+M.stop = function()
+  vim.fn.system("timew stop")
+end
+
 M.setup = function(config)
   vim.api.nvim_create_user_command("TimewSummary", function(opts)
     local hint = opts.fargs[1] and opts.fargs[1] or M.config.summary_hint
@@ -245,6 +249,14 @@ M.setup = function(config)
       return M.range_hints
     end,
   })
+
+  vim.api.nvim_create_user_command("TimewStop", function(opts)
+    M.stop()
+  end, {})
+  -- TimewEdit
+  -- Feed
+  -- $ timew export :all | jq -r '.[] | "@\(.id) \(.start[0:4] + "-" + .start[4:6] + "-" + .start[6:11] + ":" + .start[11:13] + ":" + .start[13:15]) \(.end[0:4] + "-" + .end[4:6] + "-" + .end[6:11] + ":" + .end[11:13] + ":" + .end[13:15]) \(.tags | join(" "))" ' | awk '{printf "%-5s %s - %-22s %s\n", $1, $2, $3, $4}'
+  -- into telescope and edit the relevant bits, ignoring id, of course
 end
 
 return M
