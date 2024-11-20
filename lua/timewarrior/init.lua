@@ -219,6 +219,129 @@ M.stop = function()
   vim.fn.system("timew stop")
 end
 
+local function on_save_edit_time_action(bufnr, index, modify)
+  vim.fn.system("timew modify " ..
+    modify .. " " .. index .. " " .. vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1] .. " :adjust")
+  print("timew modify " ..
+    modify .. " " .. index .. " " .. vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1] .. " :adjust")
+end
+
+local function edit_time(content, modify)
+  local index, timestamp_start, timestamp_end, tags = content:match("^(%S+)%s+(%S+)%s+-%s+(%S+)%s+(.+)$")
+  -- local timestamps = timestamp_start .. " - " .. timestamp_end
+
+  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
+  local popup = Popup({
+    position = '50%',
+    size = {
+      width = "50%",
+      height = 1,
+    },
+    enter = true,
+    focusable = true,
+    zindex = 10,
+    relative = 'editor',
+    border = {
+      padding = {
+        top = 1,
+        bottom = 1,
+        left = 1,
+        right = 1,
+      },
+      style = "rounded",
+      text = {
+        top = " Edit entry: " .. index .. " [" .. tags .. "]",
+        top_align = "center",
+        bottom_align = "left",
+        bottom = NuiText("<Esc> exit | <C-s> save", "Normal"),
+      },
+    },
+    buf_options = {
+      modifiable = true,
+      readonly = false,
+    },
+    win_options = {
+      winblend = 10,
+      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
+    },
+  })
+
+  popup.border:set_highlight('border')
+
+  popup:map('n', '<Esc>', function()
+    popup:unmount()
+  end, { noremap = true })
+
+  popup:map('n', '<C-s>', function()
+    on_save_edit_time_action(popup.bufnr, index, modify)
+    popup:unmount()
+  end, { noremap = true })
+
+  popup:mount()
+  local timestamp = (modify == "start" and timestamp_start or timestamp_end)
+  vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, vim.split(timestamp, "\n"))
+
+  popup:on(event.BufLeave, function()
+    popup:unmount()
+  end)
+end
+
+M.edit = function(opts)
+  local sorter = ':' .. opts
+  local command = "timew export " ..
+      sorter ..
+      " | jq -r '.[] | \"@\\(.id) \\(.start[0:4] + \"-\" + .start[4:6] + \"-\" + .start[6:11] + \":\" + .start[11:13] + \":\" + .start[13:15]) \\(.end[0:4] + \"-\" + .end[4:6] + \"-\" + .end[6:11] + \":\" + .end[11:13] + \":\" + .end[13:15]) \\(.tags | join(\" \"))\"' | awk '{printf \"%-5s %s - %-22s %s\\n\", $1, $2, $3, $4}'"
+
+  local entries = get_command_results(command)
+  table.sort(entries, function(a, b)
+    local numA = tonumber(a:match("@(%d+)"))
+    local numB = tonumber(b:match("@(%d+)"))
+    return numA < numB
+  end)
+
+  pickers.new({}, {
+    prompt_title = "entries",
+    results_title = "<C-s> Edit start time | <C-e> Edit end time",
+    finder = finders.new_table({ results = entries }),
+    sorter = conf.generic_sorter(opts),
+    attach_mappings = function(prompt_bufnr, map)
+      actions.select_default:replace(function()
+        local selection = action_state.get_selected_entry()
+        if selection then
+          local result = selection.value
+          -- FIXME do something
+          -- vim.fn.system("timew track " .. vim.fn.shellescape(result))
+          -- print("Tracking: " .. result)
+        end
+        actions.close(prompt_bufnr)
+      end)
+
+      map("i", "<C-s>", function()
+        local selection = action_state.get_selected_entry()
+        if selection then
+          local content = selection.value
+          print(content)
+          actions.close(prompt_bufnr)
+          edit_time(content, "start")
+        end
+      end)
+
+      map("i", "<C-e>", function()
+        local selection = action_state.get_selected_entry()
+        if selection then
+          local content = selection.value
+          print(content)
+          actions.close(prompt_bufnr)
+          edit_time(content, "end")
+        end
+      end)
+
+
+      return true
+    end,
+  }):find()
+end
+
 M.setup = function(config)
   vim.api.nvim_create_user_command("TimewSummary", function(opts)
     local hint = opts.fargs[1] and opts.fargs[1] or M.config.summary_hint
@@ -253,10 +376,11 @@ M.setup = function(config)
   vim.api.nvim_create_user_command("TimewStop", function(opts)
     M.stop()
   end, {})
-  -- TimewEdit
-  -- Feed
-  -- $ timew export :all | jq -r '.[] | "@\(.id) \(.start[0:4] + "-" + .start[4:6] + "-" + .start[6:11] + ":" + .start[11:13] + ":" + .start[13:15]) \(.end[0:4] + "-" + .end[4:6] + "-" + .end[6:11] + ":" + .end[11:13] + ":" + .end[13:15]) \(.tags | join(" "))" ' | awk '{printf "%-5s %s - %-22s %s\n", $1, $2, $3, $4}'
-  -- into telescope and edit the relevant bits, ignoring id, of course
+
+  vim.api.nvim_create_user_command("TimewEdit", function(opts)
+    local hint = opts.fargs[1] and opts.fargs[1] or M.config.tags_hint
+    M.edit(hint)
+  end, {})
 end
 
 return M
