@@ -69,7 +69,7 @@ M.summary = function(opts, width, height)
         top = " Summary ",
         top_align = "center",
         bottom_align = "left",
-        bottom = NuiText("q <quit>", "Error"),
+        bottom = NuiText("<Esc> exit", "Error"),
       },
     },
     buf_options = {
@@ -84,7 +84,7 @@ M.summary = function(opts, width, height)
 
   popup.border:set_highlight('border')
 
-  popup:map('n', 'q', function()
+  popup:map('n', '<Esc>', function()
     popup:unmount()
   end, { noremap = true })
 
@@ -137,7 +137,7 @@ M.tags = function(opts, width, height)
         top = " Tags ",
         top_align = "center",
         bottom_align = "left",
-        bottom = NuiText("q <quit>", "Error"),
+        bottom = NuiText("<Esc> exit", "Error"),
       },
     },
     buf_options = {
@@ -152,7 +152,7 @@ M.tags = function(opts, width, height)
 
   popup.border:set_highlight('border')
 
-  popup:map('n', 'q', function()
+  popup:map('n', '<Esc>', function()
     popup:unmount()
   end, { noremap = true })
 
