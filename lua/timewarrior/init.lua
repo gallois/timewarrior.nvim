@@ -178,7 +178,7 @@ M.tags = function(opts, width, height)
   })
 end
 
-local function get_tags(command)
+local function get_command_results(command)
   local result = vim.fn.systemlist(command)
 
   local tags = {}
@@ -194,7 +194,7 @@ end
 M.track_tag = function(opts)
   local sorter = ':' .. opts
   local command = "timew tags " .. sorter .. " | awk 'NR > 3 && /.+/ { print $1 }'"
-  local tags = get_tags(command)
+  local tags = get_command_results(command)
 
   pickers.new({}, {
     prompt_title = "tags",
