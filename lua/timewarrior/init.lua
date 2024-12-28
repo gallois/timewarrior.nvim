@@ -219,6 +219,10 @@ M.stop = function()
   vim.fn.system("timew stop")
 end
 
+M.continue = function()
+  vim.fn.system("timew continue")
+end
+
 local function on_save_edit_time_action(bufnr, index, modify)
   vim.fn.system("timew modify " ..
     modify .. " " .. index .. " " .. vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1] .. " :adjust")
@@ -375,6 +379,10 @@ M.setup = function(config)
 
   vim.api.nvim_create_user_command("TimewStop", function(_)
     M.stop()
+  end, {})
+
+  vim.api.nvim_create_user_command("TimewContinue", function(_)
+    M.continue()
   end, {})
 
   vim.api.nvim_create_user_command("TimewEdit", function(opts)
