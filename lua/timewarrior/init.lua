@@ -373,7 +373,7 @@ M.setup = function(config)
     end,
   })
 
-  vim.api.nvim_create_user_command("TimewStop", function(opts)
+  vim.api.nvim_create_user_command("TimewStop", function(_)
     M.stop()
   end, {})
 
