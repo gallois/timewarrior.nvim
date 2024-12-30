@@ -107,6 +107,7 @@ M.summary = function(opts, width, height)
           end
         end
         vim.api.nvim_buf_set_lines(popup.bufnr, 0, 1, false, to_buf)
+        vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
       end
     end,
   })
