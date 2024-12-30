@@ -14,7 +14,7 @@ M.config = {
   summary_hint = 'week',
   tags_hint = 'all',
   size = {
-    width = 120,
+    width = "50%",
     height = 30,
   },
 }
@@ -78,6 +78,8 @@ M.summary = function(opts, width, height)
     },
     win_options = {
       winblend = 10,
+      wrap = false,
+      linebreak = false,
       winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
     },
   })
