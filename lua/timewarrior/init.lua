@@ -237,8 +237,69 @@ local function on_save_edit_time_action(bufnr, index, modify)
     modify .. " " .. index .. " " .. vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1] .. " :adjust")
 end
 
+local function error_popup(content)
+  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
+  local popup = Popup({
+    position = '50%',
+    size = {
+      width = "80%",
+      height = 1,
+    },
+    enter = true,
+    focusable = true,
+    zindex = 10,
+    relative = 'editor',
+    border = {
+      padding = {
+        top = 1,
+        bottom = 1,
+        left = 1,
+        right = 1,
+      },
+      style = "rounded",
+      text = {
+        top = "Error",
+        top_align = "center",
+        bottom_align = "left",
+        bottom = NuiText("<Esc|q> exit", "Normal"),
+      },
+    },
+    buf_options = {
+      modifiable = true,
+      readonly = false,
+    },
+    win_options = {
+      winblend = 10,
+      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
+    },
+  })
+
+  popup.border:set_highlight('border')
+
+  popup:map('n', '<Esc>', function()
+    popup:unmount()
+  end, { noremap = true })
+
+  popup:map('n', 'q', function()
+    popup:unmount()
+  end, { noremap = true })
+
+  popup:mount()
+
+  popup:on(event.BufLeave, function()
+    popup:unmount()
+  end)
+
+  vim.api.nvim_buf_set_lines(popup.bufnr, 0, 1, false, vim.split(content, "\n"))
+  vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
+end
+
 local function edit_time(content, modify)
   local index, timestamp_start, timestamp_end, tags = content:match("^(%S+)%s+(%S+)%s+-%s+(%S+)%s+(.+)$")
+  if modify == "end" and string.match(timestamp_end, "^%-") then
+    error_popup("Can't edit the end time of an open entry, run :TimewStop before doing it")
+    return
+  end
 
   vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
   local popup = Popup({
