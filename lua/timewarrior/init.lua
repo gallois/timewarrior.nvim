@@ -358,16 +358,24 @@ local function edit_time(content, modify)
 end
 
 M.edit = function(opts)
-  local sorter = ':' .. opts
-  local command = "timew export " ..
-      sorter ..
-      " | jq -r '.[] | \"@\\(.id) \\(.start[0:4] + \"-\" + .start[4:6] + \"-\" + .start[6:11] + \":\" + .start[11:13] + \":\" + .start[13:15]) \\(.end[0:4] + \"-\" + .end[4:6] + \"-\" + .end[6:11] + \":\" + .end[11:13] + \":\" + .end[13:15]) \\(.tags | join(\" \"))\"' | awk '{printf \"%-5s %s - %-22s %s\\n\", $1, $2, $3, $4}'"
+  local sorter = ':week'
+  -- FIXME make g?date portable
+  local str =
+  [[ | jq -r '.[] | "@\(.id) \(.start[0:4] + "-" + .start[4:6] + "-" + .start[6:11] + ":" + .start[11:13] + ":" + .start[13:15]) \(.end[0:4] + "-" + .end[4:6] + "-" + .end[6:11] + ":" + .end[11:13] + ":" + .end[13:15]) \(.tags | join(" "))"' | awk '{ cmd2 = "gdate -d \"" $2 " UTC\" +\"%Y-%m-%dT%H:%M\""; cmd3 = "gdate -d \"" $3 " UTC\" +\"%Y-%m-%dT%H:%M\" || echo \"-\""; cmd2 | getline local2; close(cmd2); cmd3 | getline local3; close(cmd3); printf "%-5s %s - %-22s %s\n", $1, local2, local3, $4 }']]
+  local command = "timew export " .. sorter .. str .. " 2> /dev/null"
 
   local entries = get_command_results(command)
   table.sort(entries, function(a, b)
     local numA = tonumber(a:match("@(%d+)"))
     local numB = tonumber(b:match("@(%d+)"))
-    return numA < numB
+
+    if numA == nil then
+      return false
+    elseif numB == nil then
+      return true
+    else
+      return numA < numB
+    end
   end)
 
   pickers.new({}, {
