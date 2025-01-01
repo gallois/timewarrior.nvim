@@ -330,7 +330,6 @@ M.edit = function(opts)
         local selection = action_state.get_selected_entry()
         if selection then
           local content = selection.value
-          print(content)
           actions.close(prompt_bufnr)
           edit_time(content, "start")
         end
@@ -340,7 +339,6 @@ M.edit = function(opts)
         local selection = action_state.get_selected_entry()
         if selection then
           local content = selection.value
-          print(content)
           actions.close(prompt_bufnr)
           edit_time(content, "end")
         end
