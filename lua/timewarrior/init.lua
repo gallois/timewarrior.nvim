@@ -14,7 +14,7 @@ M.config = {
   summary_hint = 'week',
   tags_hint = 'all',
   size = {
-    width = "50%",
+    width = "80%",
     height = 30,
   },
 }
