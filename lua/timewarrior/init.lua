@@ -239,7 +239,6 @@ end
 
 local function edit_time(content, modify)
   local index, timestamp_start, timestamp_end, tags = content:match("^(%S+)%s+(%S+)%s+-%s+(%S+)%s+(.+)$")
-  -- local timestamps = timestamp_start .. " - " .. timestamp_end
 
   vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
   local popup = Popup({
