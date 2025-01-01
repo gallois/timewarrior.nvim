@@ -69,7 +69,7 @@ M.summary = function(opts, width, height)
         top = " Summary ",
         top_align = "center",
         bottom_align = "left",
-        bottom = NuiText("<Esc> exit", "Error"),
+        bottom = NuiText("<Esc|q> exit", "Error"),
       },
     },
     buf_options = {
@@ -87,6 +87,10 @@ M.summary = function(opts, width, height)
   popup.border:set_highlight('border')
 
   popup:map('n', '<Esc>', function()
+    popup:unmount()
+  end, { noremap = true })
+
+  popup:map('n', 'q', function()
     popup:unmount()
   end, { noremap = true })
 
