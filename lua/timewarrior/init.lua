@@ -357,6 +357,63 @@ local function edit_time(content, modify)
   end)
 end
 
+local function split_str(inputstr, sep)
+  if sep == nil then
+    sep = "%s"
+  end
+  local t = {}
+  for str in string.gmatch(inputstr, "([^" .. sep .. "]+)") do
+    table.insert(t, str)
+  end
+  return t
+end
+
+local function select_start_end(content)
+  local Menu = require("nui.menu")
+  local event = require("nui.utils.autocmd").event
+
+  local t = split_str(content)
+
+  local menu = Menu({
+    position = "50%",
+    size = {
+      width = 39,
+      height = 2,
+    },
+    border = {
+      style = "single",
+      text = {
+        top = "Modifying " .. t[5],
+        top_align = "center",
+        bottom = t[2] .. " " .. t[3] .. " " .. t[4],
+      },
+    },
+    win_options = {
+      winhighlight = "Normal:Normal,FloatBorder:Normal",
+    },
+  }, {
+    lines = {
+      Menu.item("start"),
+      Menu.item("end"),
+    },
+    max_width = 20,
+    keymap = {
+      focus_next = { "j", "<Down>", "<Tab>" },
+      focus_prev = { "k", "<Up>", "<S-Tab>" },
+      close = { "<Esc>", "<C-c>" },
+      submit = { "<CR>", "<Space>" },
+    },
+    on_close = function()
+      -- close
+    end,
+    on_submit = function(item)
+      edit_time(content, item.text)
+    end,
+  })
+
+  menu:mount()
+end
+
 M.edit = function(opts)
   local sorter = ':' .. opts
   -- FIXME make g?date portable
@@ -388,11 +445,9 @@ M.edit = function(opts)
         local selection = action_state.get_selected_entry()
         if selection then
           local content = selection.value
-          -- FIXME do something
-          -- vim.fn.system("timew track " .. vim.fn.shellescape(content))
-          -- print("Tracking: " .. content)
+          actions.close(prompt_bufnr)
+          select_start_end(content)
         end
-        actions.close(prompt_bufnr)
       end)
 
       map("i", "<C-s>", function()
