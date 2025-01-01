@@ -318,10 +318,10 @@ M.edit = function(opts)
       actions.select_default:replace(function()
         local selection = action_state.get_selected_entry()
         if selection then
-          local result = selection.value
+          local content = selection.value
           -- FIXME do something
-          -- vim.fn.system("timew track " .. vim.fn.shellescape(result))
-          -- print("Tracking: " .. result)
+          -- vim.fn.system("timew track " .. vim.fn.shellescape(content))
+          -- print("Tracking: " .. content)
         end
         actions.close(prompt_bufnr)
       end)
