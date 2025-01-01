@@ -416,10 +416,39 @@ end
 
 M.edit = function(opts)
   local sorter = ':' .. opts
-  -- FIXME make g?date portable
-  local str =
-  [[ | jq -r '.[] | "@\(.id) \(.start[0:4] + "-" + .start[4:6] + "-" + .start[6:11] + ":" + .start[11:13] + ":" + .start[13:15]) \(.end[0:4] + "-" + .end[4:6] + "-" + .end[6:11] + ":" + .end[11:13] + ":" + .end[13:15]) \(.tags | join(" "))"' | awk '{ cmd2 = "gdate -d \"" $2 " UTC\" +\"%Y-%m-%dT%H:%M\""; cmd3 = "gdate -d \"" $3 " UTC\" +\"%Y-%m-%dT%H:%M\" || echo \"-\""; cmd2 | getline local2; close(cmd2); cmd3 | getline local3; close(cmd3); printf "%-5s %s - %-22s %s\n", $1, local2, local3, $4 }']]
-  local command = "timew export " .. sorter .. str .. " 2> /dev/null"
+
+  local function is_gnu_date()
+    local handle = io.popen("date --version 2>/dev/null")
+    local result
+    if handle then
+      result = handle:read("*a")
+      handle:close()
+    else
+      result = nil
+      print("Failed to execute command or open process handle.")
+    end
+    return result:find("GNU coreutils") ~= nil
+  end
+
+  local jq_cmd =
+  [[ | jq -r '.[] | "@\(.id) \(.start[0:4] + "-" + .start[4:6] + "-" + .start[6:11] + ":" + .start[11:13] + ":" + .start[13:15]) \(.end[0:4] + "-" + .end[4:6] + "-" + .end[6:11] + ":" + .end[11:13] + ":" + .end[13:15]) \(.tags | join(" "))"']]
+
+  local awk_script = [[awk '{
+    cmd2 = "]] .. (is_gnu_date()
+    and [[date -d \"" $2 " UTC\" +\"%Y-%m-%dT%H:%M:%S\"]]
+    or [[date -j -f \"%Y-%m-%dT%H:%M:%S %z\" \"" $2 " +0000\" +\"%Y-%m-%dT%H:%M:%S\"]]) .. [[";
+    cmd3 = "]] .. (is_gnu_date()
+    and [[date -d \"" $3 " UTC\" +\"%Y-%m-%dT%H:%M:%S\"]]
+    or [[date -j -f \"%Y-%m-%dT%H:%M:%S %z\" \"" $3 " +0000\" +\"%Y-%m-%dT%H:%M:%S\"]]) .. [[ || echo \"-\"";
+    cmd2 | getline local2;
+    close(cmd2);
+    cmd3 | getline local3;
+    close(cmd3);
+    printf "%-5s %s - %-22s %s\n", $1, local2, local3, $4
+   }']]
+
+  local full_cmd = jq_cmd .. " | " .. awk_script
+  local command = "timew export " .. sorter .. full_cmd .. " 2> /dev/null"
 
   local entries = get_command_results(command)
   table.sort(entries, function(a, b)
