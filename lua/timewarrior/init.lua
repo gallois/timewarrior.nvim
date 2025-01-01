@@ -207,7 +207,7 @@ M.track_tag = function(opts)
     prompt_title = "tags",
     finder = finders.new_table({ results = tags }),
     sorter = conf.generic_sorter(opts),
-    attach_mappings = function(prompt_bufnr, map)
+    attach_mappings = function(prompt_bufnr, _)
       actions.select_default:replace(function()
         local selection = action_state.get_selected_entry()
         if selection then
@@ -370,7 +370,6 @@ end
 
 local function select_start_end(content)
   local Menu = require("nui.menu")
-  local event = require("nui.utils.autocmd").event
 
   local t = split_str(content)
 
@@ -503,7 +502,7 @@ M.edit = function(opts)
   }):find()
 end
 
-M.setup = function(config)
+M.setup = function(_)
   vim.api.nvim_create_user_command("TimewSummary", function(opts)
     local hint = opts.fargs[1] and opts.fargs[1] or M.config.summary_hint
     M.summary(hint, M.config.size.width, M.config.size.height)
