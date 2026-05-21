@@ -559,7 +559,7 @@ M.edit = function(opts)
 
   pickers.new({}, {
     prompt_title = "entries",
-    results_title = "<C-s> Edit start time | <C-e> Edit end time",
+    results_title = "<C-s> Edit start | <C-e> Edit end | <C-d> Delete",
     finder = finders.new_table({ results = entries }),
     sorter = conf.generic_sorter(opts),
     attach_mappings = function(prompt_bufnr, map)
@@ -590,6 +590,18 @@ M.edit = function(opts)
         end
       end)
 
+      map("i", "<C-d>", function()
+        local selection = action_state.get_selected_entry()
+        if not selection then return end
+        local index = selection.value:match("^(%S+)")
+        if not index then return end
+        actions.close(prompt_bufnr)
+        local confirm = vim.fn.confirm("Delete entry " .. index .. "?", "&Yes\n&No", 2)
+        if confirm == 1 then
+          vim.fn.system({ "timew", "delete", index, ":yes" })
+          print("Deleted " .. index)
+        end
+      end)
 
       return true
     end,
