@@ -440,6 +440,80 @@ M.week = function(opts)
   vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
 end
 
+M.chart = function(opts)
+  local chart_type = opts or "week"
+  local cmd = "timew " .. chart_type
+
+  local width = vim.o.columns - 4
+  local height = math.min(vim.o.lines - 4, 24)
+  local row = math.floor((vim.o.lines - height) / 2)
+  local col = math.floor((vim.o.columns - width) / 2)
+
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  local winid = vim.api.nvim_open_win(bufnr, true, {
+    relative = 'editor',
+    width = width,
+    height = height,
+    row = row,
+    col = col,
+    style = 'minimal',
+    border = 'rounded',
+    title = ' ' .. chart_type .. ' chart ',
+    title_pos = 'center',
+  })
+
+  vim.wo[winid].winblend = 10
+
+  local function close()
+    if vim.api.nvim_win_is_valid(winid) then
+      vim.api.nvim_win_close(winid, true)
+    end
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      vim.api.nvim_buf_delete(bufnr, { force = true })
+    end
+  end
+
+  vim.fn.termopen(cmd, {
+    on_exit = function()
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+        -- Neovim appends "[Process exited N]" to the terminal buffer.
+        -- Switch the buffer out of terminal mode so we can edit it, then
+        -- strip that trailing noise before the user sees it.
+        pcall(function()
+          vim.bo[bufnr].buftype = ''
+          vim.bo[bufnr].modifiable = true
+          local n = vim.api.nvim_buf_line_count(bufnr)
+          while n > 0 do
+            local l = vim.api.nvim_buf_get_lines(bufnr, n - 1, n, false)[1] or ''
+            if l == '' or l:find('%[Process exited') then
+              vim.api.nvim_buf_set_lines(bufnr, n - 1, n, false, {})
+              n = n - 1
+            else
+              break
+            end
+          end
+          vim.bo[bufnr].modifiable = false
+        end)
+
+        if vim.api.nvim_win_is_valid(winid) then
+          vim.api.nvim_win_set_cursor(winid, { 1, 0 })
+        end
+        vim.keymap.set('n', 'q',     close, { buffer = bufnr, noremap = true })
+        vim.keymap.set('n', '<Esc>', close, { buffer = bufnr, noremap = true })
+        vim.cmd('stopinsert')
+      end)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd('WinLeave', {
+    buffer = bufnr,
+    once = true,
+    callback = close,
+  })
+end
+
 M.stop = function()
   M.status()  -- ensure cache is fresh so we can read the current tags
   local tags = _status_cache.tags
@@ -797,6 +871,14 @@ M.setup = function(opts)
     complete = function(_, _, _)
       return M.range_hints
     end,
+  })
+
+  vim.api.nvim_create_user_command("TimewChart", function(opts)
+    local hint = opts.fargs[1] or "week"
+    M.chart(hint)
+  end, {
+    nargs = '?',
+    complete = function() return { "day", "week", "month" } end,
   })
 
   vim.api.nvim_create_user_command("TimewWeek", function(opts)

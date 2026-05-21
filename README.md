@@ -48,8 +48,10 @@ require("timewarrior").setup({
 
 | Command | Description |
 |---|---|
-| `:TimewSummary [range]` | Show a time summary popup |
-| `:TimewTags [range]` | Show all tags used in a range |
+| `:TimewSummary [range]` | Tabular interval summary popup |
+| `:TimewTags [range]` | List all tags used in a range |
+| `:TimewWeek [range]` | Tag breakdown with bar chart and day totals |
+| `:TimewChart [day\|week\|month]` | Visual gantt chart (coloured blocks, full width) |
 | `:TimewTrack` | Start tracking — type any tag(s) in a popup |
 | `:TimewTrackTag [range]` | Start tracking — pick an existing tag via Telescope |
 | `:TimewStop` | Stop the current interval |
@@ -58,6 +60,11 @@ require("timewarrior").setup({
 
 All commands that accept a `[range]` support tab-completion with Timewarrior's
 built-in hints: `today`, `week`, `month`, `year`, `lastweek`, day names, etc.
+
+`:TimewTrack`, `:TimewTrackTag`, `:TimewStop`, and `:TimewContinue` show a
+`vim.notify` notification when the state changes, compatible with
+[nvim-notify](https://github.com/rcarriga/nvim-notify) and
+[noice.nvim](https://github.com/folke/noice.nvim) out of the box.
 
 ### :TimewSummary
 
@@ -82,6 +89,32 @@ to start tracking. Press `<Esc>` to cancel.
 
 Opens a Telescope picker pre-populated with all tags used in the given range.
 Select one and press `<CR>` to start tracking it.
+
+### :TimewWeek
+
+Opens a popup showing per-tag time totals for the given range, a proportional
+bar chart, percentage share, and a day-by-day breakdown at the bottom. The
+popup expands to use the full editor width so the bars are as wide as possible.
+
+```
+  Tag               Time
+  ──────────────────────────────────────────────────────────────
+  work             8h45m  ████████████████████████████░░░░  (90%)
+  coding           4h45m  ██████████████░░░░░░░░░░░░░░░░░░  (49%)
+  ...
+  ──────────────────────────────────────────────────────────────
+  Total            9h45m
+
+  2026-05-18 Mon      3h00m
+  2026-05-19 Tue      3h15m
+```
+
+### :TimewChart
+
+Opens a full-width floating terminal window running `timew day`, `timew week`,
+or `timew month`. The output renders with full ANSI colour support (coloured
+blocks, underlines) exactly as it would in your terminal. Close with `q`,
+`<Esc>`, or by moving focus away.
 
 ### :TimewEdit
 
