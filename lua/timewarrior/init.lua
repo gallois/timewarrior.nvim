@@ -44,6 +44,17 @@ M.range_hints = {
   'sunday',
 }
 
+local function get_command_results(command)
+  local result = vim.fn.systemlist(command)
+  local lines = {}
+  for _, line in ipairs(result) do
+    if line ~= "" then
+      table.insert(lines, line)
+    end
+  end
+  return lines
+end
+
 -- Convert UTC time components to a Unix timestamp correctly regardless of local timezone.
 -- os.time({...}) interprets its input as local time; this corrects for the offset.
 local function utc_to_unix(y, mo, d, h, mi, s)
@@ -98,6 +109,17 @@ M.status = function()
   local m = math.floor((elapsed % 3600) / 60)
   local duration = h > 0 and string.format("%dh%02dm", h, m) or string.format("%dm", m)
   return _status_cache.tags .. " (" .. duration .. ")"
+end
+
+local function half_width(w)
+  if type(w) == "number" then
+    return math.floor(w / 2)
+  end
+  local pct = w:match("^(%d+)%%$")
+  if pct then
+    return math.floor(tonumber(pct) / 2) .. "%"
+  end
+  return w
 end
 
 M.summary = function(opts, width, height)
@@ -178,6 +200,7 @@ end
 M.tags = function(opts, width, height)
   local sorter = ':' .. opts
   local command = "timew tags " .. sorter .. " | awk 'NR > 3 && /.+/ { print $1 }'"
+  local lines = get_command_results(command)
 
   vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
   local popup = Popup({
@@ -227,33 +250,8 @@ M.tags = function(opts, width, height)
     popup:unmount()
   end)
 
-  vim.fn.jobstart(command, {
-    stdout_buffered = true,
-    on_stdout = function(_, data)
-      local to_buf = {}
-      if data then
-        for _, v in ipairs(data) do
-          if v ~= "" then
-            table.insert(to_buf, v)
-          end
-        end
-        vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, to_buf)
-      end
-    end,
-  })
-end
-
-local function get_command_results(command)
-  local result = vim.fn.systemlist(command)
-
-  local tags = {}
-  for _, line in ipairs(result) do
-    if line ~= "" then
-      table.insert(tags, line)
-    end
-  end
-
-  return tags
+  vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
 end
 
 M.track_tag = function(opts)
@@ -624,7 +622,7 @@ M.setup = function(opts)
 
   vim.api.nvim_create_user_command("TimewTags", function(opts)
     local hint = opts.fargs[1] and opts.fargs[1] or M.config.tags_hint
-    M.tags(hint, M.config.size.width / 2, M.config.size.height)
+    M.tags(hint, half_width(M.config.size.width), M.config.size.height)
   end, {
     nargs = '?',
     complete = function(_, _, _)
