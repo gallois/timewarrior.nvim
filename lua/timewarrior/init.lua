@@ -14,6 +14,7 @@ M.config = {
   summary_hint = 'week',
   tags_hint = 'all',
   edit_hint = 'week',
+  status_refresh = 10,
   size = {
     width = "80%",
     height = 30,
@@ -42,6 +43,62 @@ M.range_hints = {
   'saturday',
   'sunday',
 }
+
+-- Convert UTC time components to a Unix timestamp correctly regardless of local timezone.
+-- os.time({...}) interprets its input as local time; this corrects for the offset.
+local function utc_to_unix(y, mo, d, h, mi, s)
+  local t = os.time({ year = y, month = mo, day = d, hour = h, min = mi, sec = s })
+  local utc = os.date("!*t", t)
+  return t - (os.time(utc) - t)
+end
+
+local function parse_timew_ts(s)
+  if not s or #s < 15 then return nil end
+  return utc_to_unix(
+    tonumber(s:sub(1, 4)), tonumber(s:sub(5, 6)), tonumber(s:sub(7, 8)),
+    tonumber(s:sub(10, 11)), tonumber(s:sub(12, 13)), tonumber(s:sub(14, 15))
+  )
+end
+
+local _status_cache = { tracking_since = nil, tags = "", expires = 0 }
+
+-- Returns a string describing the currently tracked interval, e.g. "work coding (1h23m)".
+-- Returns "" when nothing is tracked.
+-- Suitable for use in statusline plugins (lualine, heirline, etc.).
+-- The timew query is cached for M.config.status_refresh seconds (default 10).
+M.status = function()
+  local now = os.time()
+
+  if now >= _status_cache.expires then
+    local result = vim.fn.system({ "timew", "export" })
+    _status_cache.expires = now + M.config.status_refresh
+
+    local ok, data = pcall(vim.fn.json_decode, result)
+    if not ok or type(data) ~= "table" or #data == 0 then
+      _status_cache.tracking_since = nil
+      _status_cache.tags = ""
+    else
+      local last = data[#data]
+      if last and not last["end"] then
+        _status_cache.tracking_since = parse_timew_ts(last.start)
+        _status_cache.tags = table.concat(last.tags or {}, " ")
+      else
+        _status_cache.tracking_since = nil
+        _status_cache.tags = ""
+      end
+    end
+  end
+
+  if not _status_cache.tracking_since then
+    return ""
+  end
+
+  local elapsed = math.max(0, now - _status_cache.tracking_since)
+  local h = math.floor(elapsed / 3600)
+  local m = math.floor((elapsed % 3600) / 60)
+  local duration = h > 0 and string.format("%dh%02dm", h, m) or string.format("%dm", m)
+  return _status_cache.tags .. " (" .. duration .. ")"
+end
 
 M.summary = function(opts, width, height)
   local sorter = ':' .. opts
