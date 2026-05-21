@@ -269,7 +269,8 @@ M.track_tag = function(opts)
         if selection then
           local result = selection.value
           vim.fn.system("timew track " .. vim.fn.shellescape(result))
-          print("Tracking: " .. result)
+          _status_cache.expires = 0
+          vim.notify("Tracking: " .. result, vim.log.levels.INFO, { title = "Timewarrior" })
         end
         actions.close(prompt_bufnr)
       end)
@@ -306,7 +307,8 @@ M.track = function()
         local tags = vim.split(value, "%s+", { trimempty = true })
         local cmd = vim.list_extend({ "timew", "track" }, tags)
         vim.fn.system(cmd)
-        print("Tracking: " .. value)
+        _status_cache.expires = 0
+        vim.notify("Tracking: " .. value, vim.log.levels.INFO, { title = "Timewarrior" })
       end
     end,
   })
@@ -439,11 +441,22 @@ M.week = function(opts)
 end
 
 M.stop = function()
+  M.status()  -- ensure cache is fresh so we can read the current tags
+  local tags = _status_cache.tags
   vim.fn.system("timew stop")
+  _status_cache.expires = 0
+  if tags ~= "" then
+    vim.notify("Stopped: " .. tags, vim.log.levels.INFO, { title = "Timewarrior" })
+  end
 end
 
 M.continue = function()
   vim.fn.system("timew continue")
+  _status_cache.expires = 0
+  M.status()
+  if _status_cache.tags ~= "" then
+    vim.notify("Tracking: " .. _status_cache.tags, vim.log.levels.INFO, { title = "Timewarrior" })
+  end
 end
 
 local function on_save_edit_time_action(bufnr, index, modify)
