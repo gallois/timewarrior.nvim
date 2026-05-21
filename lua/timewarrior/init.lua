@@ -13,6 +13,7 @@ local M = {}
 M.config = {
   summary_hint = 'week',
   tags_hint = 'all',
+  edit_hint = 'week',
   size = {
     width = "80%",
     height = 30,
@@ -110,7 +111,7 @@ M.summary = function(opts, width, height)
             table.insert(to_buf, v)
           end
         end
-        vim.api.nvim_buf_set_lines(popup.bufnr, 0, 1, false, to_buf)
+        vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, to_buf)
         vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
       end
     end,
@@ -179,7 +180,7 @@ M.tags = function(opts, width, height)
             table.insert(to_buf, v)
           end
         end
-        vim.api.nvim_buf_set_lines(popup.bufnr, 0, 1, false, to_buf)
+        vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, to_buf)
       end
     end,
   })
@@ -231,10 +232,8 @@ M.continue = function()
 end
 
 local function on_save_edit_time_action(bufnr, index, modify)
-  vim.fn.system("timew modify " ..
-    modify .. " " .. index .. " " .. vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1] .. " :adjust")
-  print("timew modify " ..
-    modify .. " " .. index .. " " .. vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1] .. " :adjust")
+  local timestamp = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1]
+  vim.fn.system({ "timew", "modify", modify, index, timestamp, ":adjust" })
 end
 
 local function error_popup(content)
@@ -296,6 +295,10 @@ end
 
 local function edit_time(content, modify)
   local index, timestamp_start, timestamp_end, tags = content:match("^(%S+)%s+(%S+)%s+-%s+(%S+)%s+(.+)$")
+  if not index then
+    error_popup("Could not parse entry")
+    return
+  end
   if modify == "end" and string.match(timestamp_end, "^%-") then
     error_popup("Can't edit the end time of an open entry, run :TimewStop before doing it")
     return
@@ -372,6 +375,7 @@ local function select_start_end(content)
   local Menu = require("nui.menu")
 
   local t = split_str(content)
+  local all_tags = table.concat(t, " ", 5)
 
   local menu = Menu({
     position = "50%",
@@ -382,7 +386,7 @@ local function select_start_end(content)
     border = {
       style = "single",
       text = {
-        top = "Modifying " .. t[5],
+        top = "Modifying " .. all_tags,
         top_align = "center",
         bottom = t[2] .. " " .. t[3] .. " " .. t[4],
       },
@@ -418,15 +422,12 @@ M.edit = function(opts)
 
   local function is_gnu_date()
     local handle = io.popen("date --version 2>/dev/null")
-    local result
-    if handle then
-      result = handle:read("*a")
-      handle:close()
-    else
-      result = nil
-      print("Failed to execute command or open process handle.")
+    if not handle then
+      return false
     end
-    return result:find("GNU coreutils") ~= nil
+    local result = handle:read("*a")
+    handle:close()
+    return result ~= nil and result:find("GNU coreutils") ~= nil
   end
 
   local jq_cmd =
@@ -502,7 +503,10 @@ M.edit = function(opts)
   }):find()
 end
 
-M.setup = function(_)
+M.setup = function(opts)
+  if opts then
+    M.config = vim.tbl_deep_extend("force", M.config, opts)
+  end
   vim.api.nvim_create_user_command("TimewSummary", function(opts)
     local hint = opts.fargs[1] and opts.fargs[1] or M.config.summary_hint
     M.summary(hint, M.config.size.width, M.config.size.height)
@@ -542,7 +546,7 @@ M.setup = function(_)
   end, {})
 
   vim.api.nvim_create_user_command("TimewEdit", function(opts)
-    local hint = opts.fargs[1] and opts.fargs[1] or M.config.tags_hint
+    local hint = opts.fargs[1] and opts.fargs[1] or M.config.edit_hint
     M.edit(hint)
   end, {
     nargs = '?',

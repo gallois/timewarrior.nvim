@@ -9,6 +9,6 @@ local timewarrior = require("timewarrior")
 return telescope.register_extension({
   setup = timewarrior.setup,
   exports = {
-    timewarrior_track_tag = require("timewarrior").track_tag(),
+    timewarrior_track_tag = require("timewarrior").track_tag,
   },
 })
