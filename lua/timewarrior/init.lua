@@ -314,6 +314,130 @@ M.track = function()
   input:mount()
 end
 
+M.week = function(opts)
+  local sorter = ':' .. (opts or 'week')
+  local data_raw = vim.fn.system({ "timew", "export", sorter })
+  local ok, data = pcall(vim.fn.json_decode, data_raw)
+  if not ok or type(data) ~= "table" then
+    vim.notify("timewarrior.nvim: could not parse timew export output", vim.log.levels.ERROR)
+    return
+  end
+
+  local tag_totals = {}
+  local day_totals = {}
+  local total_secs = 0
+
+  for _, entry in ipairs(data) do
+    if entry["end"] then
+      local s = parse_timew_ts(entry.start)
+      local e = parse_timew_ts(entry["end"])
+      if s and e then
+        local dur = e - s
+        total_secs = total_secs + dur
+        local day_key = os.date("%Y-%m-%d %a", s)
+        day_totals[day_key] = (day_totals[day_key] or 0) + dur
+        for _, tag in ipairs(entry.tags or {}) do
+          tag_totals[tag] = (tag_totals[tag] or 0) + dur
+        end
+      end
+    end
+  end
+
+  if total_secs == 0 then
+    vim.notify("timewarrior.nvim: no completed intervals in range", vim.log.levels.WARN)
+    return
+  end
+
+  local function fmt_dur(secs)
+    local h = math.floor(secs / 3600)
+    local m = math.floor((secs % 3600) / 60)
+    return h > 0 and string.format("%dh%02dm", h, m) or string.format("%dm", m)
+  end
+
+  local sorted_tags = {}
+  for tag, secs in pairs(tag_totals) do
+    table.insert(sorted_tags, { tag = tag, secs = secs })
+  end
+  table.sort(sorted_tags, function(a, b) return a.secs > b.secs end)
+
+  local max_tag_len = 3
+  for _, item in ipairs(sorted_tags) do
+    if #item.tag > max_tag_len then max_tag_len = #item.tag end
+  end
+  max_tag_len = math.min(max_tag_len, 40)
+
+  -- Use as much width as the editor allows; leave a 4-col margin each side.
+  -- Fixed columns: 2 (indent) + max_tag_len + 2 + 8 (time) + 2 + 7 (pct) + 2 = 23 + max_tag_len
+  local popup_width = math.min(vim.o.columns - 4, 120)
+  local BAR = math.max(20, popup_width - max_tag_len - 23)
+  local col_fmt = "  %-" .. max_tag_len .. "s  %8s  %s"
+  local sep = "  " .. string.rep("─", max_tag_len + BAR + 14)
+
+  local lines = {}
+  table.insert(lines, string.format(col_fmt, "Tag", "Time", ""))
+  table.insert(lines, sep)
+  for _, item in ipairs(sorted_tags) do
+    local pct = item.secs / total_secs
+    local filled = math.floor(pct * BAR)
+    local bar = string.rep("█", filled) .. string.rep("░", BAR - filled)
+    local pct_str = string.format("(%2.0f%%)", pct * 100)
+    local tag = #item.tag > max_tag_len and (item.tag:sub(1, max_tag_len - 1) .. "…") or item.tag
+    table.insert(lines, string.format(col_fmt, tag, fmt_dur(item.secs), bar .. " " .. pct_str))
+  end
+  table.insert(lines, sep)
+  table.insert(lines, string.format(col_fmt, "Total", fmt_dur(total_secs), ""))
+
+  local sorted_days = {}
+  for day, secs in pairs(day_totals) do
+    table.insert(sorted_days, { day = day, secs = secs })
+  end
+  table.sort(sorted_days, function(a, b) return a.day < b.day end)
+  if #sorted_days > 0 then
+    table.insert(lines, "")
+    for _, item in ipairs(sorted_days) do
+      table.insert(lines, string.format("  %-16s  %8s", item.day, fmt_dur(item.secs)))
+    end
+  end
+
+  local popup_height = #lines
+
+  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
+  local popup = Popup({
+    position = '50%',
+    size = { width = popup_width, height = popup_height },
+    enter = true,
+    focusable = true,
+    zindex = 10,
+    relative = 'editor',
+    border = {
+      padding = { top = 1, bottom = 1, left = 1, right = 1 },
+      style = "rounded",
+      text = {
+        top = " " .. opts .. " summary ",
+        top_align = "center",
+        bottom = NuiText("<Esc|q> exit", "Error"),
+        bottom_align = "left",
+      },
+    },
+    buf_options = { modifiable = true, readonly = false },
+    win_options = {
+      winblend = 10,
+      wrap = false,
+      linebreak = false,
+      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
+    },
+  })
+
+  popup.border:set_highlight('border')
+  popup:map('n', '<Esc>', function() popup:unmount() end, { noremap = true })
+  popup:map('n', 'q', function() popup:unmount() end, { noremap = true })
+  popup:mount()
+  popup:on(event.BufLeave, function() popup:unmount() end)
+
+  vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
+end
+
 M.stop = function()
   vim.fn.system("timew stop")
 end
@@ -655,6 +779,16 @@ M.setup = function(opts)
   vim.api.nvim_create_user_command("TimewEdit", function(opts)
     local hint = opts.fargs[1] and opts.fargs[1] or M.config.edit_hint
     M.edit(hint)
+  end, {
+    nargs = '?',
+    complete = function(_, _, _)
+      return M.range_hints
+    end,
+  })
+
+  vim.api.nvim_create_user_command("TimewWeek", function(opts)
+    local hint = opts.fargs[1] and opts.fargs[1] or M.config.summary_hint
+    M.week(hint)
   end, {
     nargs = '?',
     complete = function(_, _, _)
