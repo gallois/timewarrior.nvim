@@ -223,6 +223,42 @@ M.track_tag = function(opts)
   }):find()
 end
 
+M.track = function()
+  local Input = require("nui.input")
+
+  local input = Input({
+    position = "50%",
+    size = { width = "50%" },
+    border = {
+      padding = { top = 1, bottom = 1, left = 1, right = 1 },
+      style = "rounded",
+      text = {
+        top = " Track ",
+        top_align = "center",
+        bottom = NuiText("<Esc> cancel | <CR> start", "Normal"),
+        bottom_align = "left",
+      },
+    },
+    win_options = {
+      winblend = 10,
+      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
+    },
+  }, {
+    prompt = "> ",
+    on_close = function() end,
+    on_submit = function(value)
+      if value and value ~= "" then
+        local tags = vim.split(value, "%s+", { trimempty = true })
+        local cmd = vim.list_extend({ "timew", "track" }, tags)
+        vim.fn.system(cmd)
+        print("Tracking: " .. value)
+      end
+    end,
+  })
+
+  input:mount()
+end
+
 M.stop = function()
   vim.fn.system("timew stop")
 end
@@ -536,6 +572,10 @@ M.setup = function(opts)
       return M.range_hints
     end,
   })
+
+  vim.api.nvim_create_user_command("TimewTrack", function(_)
+    M.track()
+  end, {})
 
   vim.api.nvim_create_user_command("TimewStop", function(_)
     M.stop()
