@@ -122,6 +122,7 @@ local function make_popup(cfg, close_q)
   }, cfg))
   popup.border:set_highlight('border')
   popup:map('n', '<Esc>', function() popup:unmount() end, { noremap = true })
+  popup:map('n', '<CR>',  function() popup:unmount() end, { noremap = true })
   if close_q then
     popup:map('n', 'q', function() popup:unmount() end, { noremap = true })
   end
@@ -412,11 +413,12 @@ M.chart = function(opts)
         if not vim.api.nvim_buf_is_valid(bufnr) then return end
 
         -- Neovim appends "[Process exited N]" to the terminal buffer.
-        -- Switch the buffer out of terminal mode so we can edit it, then
-        -- strip that trailing noise before the user sees it.
+        -- nvim_buf_call + setlocal is more reliable than vim.bo[] for
+        -- changing options on a terminal buffer after the process exits.
         pcall(function()
-          vim.bo[bufnr].buftype = ''
-          vim.bo[bufnr].modifiable = true
+          vim.api.nvim_buf_call(bufnr, function()
+            vim.cmd('setlocal buftype= modifiable')
+          end)
           local n = vim.api.nvim_buf_line_count(bufnr)
           while n > 0 do
             local l = vim.api.nvim_buf_get_lines(bufnr, n - 1, n, false)[1] or ''
@@ -427,7 +429,9 @@ M.chart = function(opts)
               break
             end
           end
-          vim.bo[bufnr].modifiable = false
+          vim.api.nvim_buf_call(bufnr, function()
+            vim.cmd('setlocal nomodifiable')
+          end)
         end)
 
         if vim.api.nvim_win_is_valid(winid) then
@@ -468,7 +472,13 @@ end
 
 local function on_save_edit_time_action(bufnr, index, modify)
   local timestamp = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1]
-  vim.fn.system({ "timew", "modify", modify, index, timestamp, ":adjust" })
+  local output = vim.fn.system({ "timew", "modify", modify, index, timestamp, ":adjust" })
+  _status_cache.expires = 0
+  if vim.v.shell_error == 0 then
+    vim.notify("Saved " .. index, vim.log.levels.INFO, { title = "Timewarrior" })
+  else
+    vim.notify("Error saving " .. index .. ": " .. vim.trim(output), vim.log.levels.ERROR, { title = "Timewarrior" })
+  end
 end
 
 local function error_popup(content)
