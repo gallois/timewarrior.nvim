@@ -99,10 +99,39 @@ local function half_width(w)
   return w
 end
 
+local _status_cache = { tracking_since = nil, tags = "", expires = 0 }
+
+-- nui popups and the terminal chart window both need explicit close tracking
+-- because BufLeave / WinLeave events are unreliable across popup mounts.
+local _chart = { winid = nil, bufnr = nil }
+local _popup_close = nil
+
+local function close_popup()
+  if _popup_close then
+    local fn = _popup_close
+    _popup_close = nil
+    fn()
+  end
+end
+
+local function close_chart()
+  local w, b = _chart.winid, _chart.bufnr
+  _chart.winid, _chart.bufnr = nil, nil
+  if w and vim.api.nvim_win_is_valid(w) then
+    pcall(vim.api.nvim_win_close, w, true)
+  end
+  if b and vim.api.nvim_buf_is_valid(b) then
+    pcall(vim.api.nvim_buf_delete, b, { force = true })
+  end
+end
+
 -- Shared popup factory with sensible defaults. cfg is merged on top of the defaults.
 -- Pass close_q=true to also bind 'q' as a close key.
+-- Closes any currently open popup before creating the new one.
 -- Returns an unmounted popup; caller is responsible for popup:mount().
 local function make_popup(cfg, close_q)
+  close_popup()
+  close_chart()
   vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
   local popup = Popup(vim.tbl_deep_extend("force", {
     position = '50%',
@@ -126,15 +155,17 @@ local function make_popup(cfg, close_q)
   if close_q then
     popup:map('n', 'q', function() popup:unmount() end, { noremap = true })
   end
-  popup:on(event.BufLeave, function() popup:unmount() end)
+  popup:on(event.BufLeave, function()
+    _popup_close = nil
+    popup:unmount()
+  end)
+  _popup_close = function() popup:unmount() end
   return popup
 end
 
 local function get_tags_for_range(sorter)
   return get_command_results("timew tags " .. sorter .. " | awk 'NR > 3 && /.+/ { print $1 }'")
 end
-
-local _status_cache = { tracking_since = nil, tags = "", expires = 0 }
 
 -- Returns a string describing the currently tracked interval, e.g. "work coding (1h23m)".
 -- Returns "" when nothing is tracked.
@@ -172,6 +203,7 @@ M.status = function()
 end
 
 M.summary = function(opts)
+  close_chart()
   local sorter = ':' .. validate_hint(opts)
   local command = { 'timew', 'summary', ':ids', sorter }
 
@@ -200,6 +232,7 @@ M.summary = function(opts)
 end
 
 M.tags = function(opts)
+  close_chart()
   local sorter = ':' .. validate_hint(opts)
   local lines = get_tags_for_range(sorter)
 
@@ -219,6 +252,7 @@ M.tags = function(opts)
 end
 
 M.track_tag = function(opts)
+  close_chart()
   local sorter = ':' .. validate_hint(opts)
   local tags = get_tags_for_range(sorter)
 
@@ -231,7 +265,7 @@ M.track_tag = function(opts)
         local selection = action_state.get_selected_entry()
         if selection then
           local result = selection.value
-          vim.fn.system("timew track " .. vim.fn.shellescape(result))
+          vim.fn.system({ "timew", "track", result })
           _status_cache.expires = 0
           vim.notify("Tracking: " .. result, vim.log.levels.INFO, { title = "Timewarrior" })
         end
@@ -243,6 +277,8 @@ M.track_tag = function(opts)
 end
 
 M.track = function()
+  close_popup()
+  close_chart()
   local Input = require("nui.input")
 
   local input = Input({
@@ -280,6 +316,7 @@ M.track = function()
 end
 
 M.week = function(opts)
+  close_chart()
   opts = opts or 'week'
   local sorter = ':' .. validate_hint(opts)
   local data_raw = vim.fn.system({ "timew", "export", sorter })
@@ -376,6 +413,9 @@ M.week = function(opts)
 end
 
 M.chart = function(opts)
+  close_popup()
+  close_chart()
+
   local chart_type = validate_hint(opts or "week", { "day", "week", "month" }, "week")
 
   local width = vim.o.columns - 4
@@ -384,10 +424,6 @@ M.chart = function(opts)
   local col = math.floor((vim.o.columns - width) / 2)
 
   local bufnr = vim.api.nvim_create_buf(false, true)
-  -- Open with enter=false so that nvim_open_win doesn't immediately fire
-  -- WinLeave/BufLeave on any currently-open popup. If it did, the popup's
-  -- unmount would run mid-creation and Neovim would raise "Window was closed
-  -- immediately". We enter explicitly below after full setup.
   local winid = vim.api.nvim_open_win(bufnr, false, {
     relative = 'editor',
     width = width,
@@ -399,81 +435,52 @@ M.chart = function(opts)
     title = ' ' .. chart_type .. ' chart ',
     title_pos = 'center',
   })
-
   vim.wo[winid].winblend = 10
 
-  local function close()
-    if vim.api.nvim_win_is_valid(winid) then
-      vim.api.nvim_win_close(winid, true)
-    end
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      vim.api.nvim_buf_delete(bufnr, { force = true })
-    end
-  end
+  _chart.winid = winid
+  _chart.bufnr = bufnr
 
-  -- termopen must run in the context of bufnr; use nvim_buf_call since bufnr
-  -- is not the current buffer yet (we opened the window with enter=false).
-  vim.api.nvim_buf_call(bufnr, function()
-    vim.fn.termopen("timew " .. chart_type, {
-      on_exit = function()
-        vim.schedule(function()
-          if not vim.api.nvim_buf_is_valid(bufnr) then return end
-
-          -- Neovim docs: "after the job exits the buffer can be edited like a
-          -- regular buffer". Setting modifiable=true (without touching buftype)
-          -- is sufficient; previous attempts also changed buftype which threw
-          -- an error inside pcall and silently aborted the whole block.
-          pcall(function()
-            vim.bo[bufnr].modifiable = true
-            local n = vim.api.nvim_buf_line_count(bufnr)
-            while n > 0 do
-              local l = vim.api.nvim_buf_get_lines(bufnr, n - 1, n, false)[1] or ''
-              if l == '' or l:find('%[Process exited') then
-                vim.api.nvim_buf_set_lines(bufnr, n - 1, n, false, {})
-                n = n - 1
-              else
-                break
-              end
-            end
-            vim.bo[bufnr].modifiable = false
-          end)
-
-          if vim.api.nvim_win_is_valid(winid) then
-            vim.api.nvim_win_set_cursor(winid, { 1, 0 })
-          end
-          vim.keymap.set('n', 'q',     close, { buffer = bufnr, noremap = true })
-          vim.keymap.set('n', '<Esc>', close, { buffer = bufnr, noremap = true })
-          vim.cmd('stopinsert')
-        end)
-      end,
-    })
-  end)
-
-  -- Close when focus leaves the chart window.
-  -- {buffer=bufnr} does not reliably match WinLeave for floating windows;
-  -- instead use a global WinLeave, check the window id explicitly, and
-  -- self-delete the autocmd.  vim.schedule defers the close past any
-  -- in-progress nvim_open_win call (which fires WinLeave synchronously and
-  -- would otherwise get "Window was closed immediately" in the new popup).
-  local wl_id
-  wl_id = vim.api.nvim_create_autocmd('WinLeave', {
+  -- TermClose fires after Neovim has appended the "[Process exited N]" marker,
+  -- so this strip pass actually has something to remove.
+  vim.api.nvim_create_autocmd('TermClose', {
+    buffer = bufnr,
+    once = true,
     callback = function()
-      if vim.api.nvim_get_current_win() == winid then
-        vim.api.nvim_del_autocmd(wl_id)
-        vim.schedule(close)
-      end
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(bufnr) then return end
+        vim.bo[bufnr].modifiable = true
+        local n = vim.api.nvim_buf_line_count(bufnr)
+        while n > 0 do
+          local l = vim.api.nvim_buf_get_lines(bufnr, n - 1, n, false)[1] or ''
+          if l == '' or l:find('%[Process exited') then
+            vim.api.nvim_buf_set_lines(bufnr, n - 1, n, false, {})
+            n = n - 1
+          else
+            break
+          end
+        end
+        vim.bo[bufnr].modifiable = false
+        if vim.api.nvim_win_is_valid(winid) then
+          vim.api.nvim_win_set_cursor(winid, { 1, 0 })
+        end
+        vim.keymap.set('n', 'q',     close_chart, { buffer = bufnr, noremap = true })
+        vim.keymap.set('n', '<Esc>', close_chart, { buffer = bufnr, noremap = true })
+        vim.cmd('stopinsert')
+      end)
     end,
   })
 
-  -- Enter the window now that everything is set up. BufLeave on any open
-  -- popup fires here (clean state) and the popup unmounts normally.
+  vim.api.nvim_buf_call(bufnr, function()
+    vim.fn.termopen({ "timew", chart_type })
+  end)
+
   vim.api.nvim_set_current_win(winid)
 end
 
 M.stop = function()
   M.status()  -- ensure cache is fresh so we can read the current tags
   local tags = _status_cache.tags
-  vim.fn.system("timew stop")
+  vim.fn.system({ "timew", "stop" })
   _status_cache.expires = 0
   if tags ~= "" then
     vim.notify("Stopped: " .. tags, vim.log.levels.INFO, { title = "Timewarrior" })
@@ -481,7 +488,7 @@ M.stop = function()
 end
 
 M.continue = function()
-  vim.fn.system("timew continue")
+  vim.fn.system({ "timew", "continue" })
   _status_cache.expires = 0
   M.status()
   if _status_cache.tags ~= "" then
@@ -491,6 +498,10 @@ end
 
 local function on_save_edit_time_action(bufnr, index, modify)
   local timestamp = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)[1]
+  if not timestamp or timestamp == "" then
+    vim.notify("No timestamp to save", vim.log.levels.ERROR, { title = "Timewarrior" })
+    return
+  end
   local output = vim.fn.system({ "timew", "modify", modify, index, timestamp, ":adjust" })
   _status_cache.expires = 0
   if vim.v.shell_error == 0 then
@@ -562,7 +573,7 @@ local function select_start_end(content)
       text = {
         top = "Modifying " .. all_tags,
         top_align = "center",
-        bottom = t[2] .. " " .. t[3] .. " " .. t[4],
+        bottom = (t[2] or "") .. " " .. (t[3] or "") .. " " .. (t[4] or ""),
       },
     },
     win_options = {
@@ -580,9 +591,7 @@ local function select_start_end(content)
       close = { "<Esc>", "<C-c>" },
       submit = { "<CR>", "<Space>" },
     },
-    on_close = function()
-      -- close
-    end,
+    on_close = function() end,
     on_submit = function(item)
       edit_time(content, item.text)
     end,
@@ -592,6 +601,7 @@ local function select_start_end(content)
 end
 
 M.edit = function(opts)
+  close_chart()
   local sorter = ':' .. validate_hint(opts)
 
   local function is_gnu_date()
