@@ -384,7 +384,11 @@ M.chart = function(opts)
   local col = math.floor((vim.o.columns - width) / 2)
 
   local bufnr = vim.api.nvim_create_buf(false, true)
-  local winid = vim.api.nvim_open_win(bufnr, true, {
+  -- Open with enter=false so that nvim_open_win doesn't immediately fire
+  -- WinLeave/BufLeave on any currently-open popup. If it did, the popup's
+  -- unmount would run mid-creation and Neovim would raise "Window was closed
+  -- immediately". We enter explicitly below after full setup.
+  local winid = vim.api.nvim_open_win(bufnr, false, {
     relative = 'editor',
     width = width,
     height = height,
@@ -407,48 +411,63 @@ M.chart = function(opts)
     end
   end
 
-  vim.fn.termopen("timew " .. chart_type, {
-    on_exit = function()
-      vim.schedule(function()
-        if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  -- termopen must run in the context of bufnr; use nvim_buf_call since bufnr
+  -- is not the current buffer yet (we opened the window with enter=false).
+  vim.api.nvim_buf_call(bufnr, function()
+    vim.fn.termopen("timew " .. chart_type, {
+      on_exit = function()
+        vim.schedule(function()
+          if not vim.api.nvim_buf_is_valid(bufnr) then return end
 
-        -- Neovim appends "[Process exited N]" to the terminal buffer.
-        -- nvim_buf_call + setlocal is more reliable than vim.bo[] for
-        -- changing options on a terminal buffer after the process exits.
-        pcall(function()
-          vim.api.nvim_buf_call(bufnr, function()
-            vim.cmd('setlocal buftype= modifiable')
-          end)
-          local n = vim.api.nvim_buf_line_count(bufnr)
-          while n > 0 do
-            local l = vim.api.nvim_buf_get_lines(bufnr, n - 1, n, false)[1] or ''
-            if l == '' or l:find('%[Process exited') then
-              vim.api.nvim_buf_set_lines(bufnr, n - 1, n, false, {})
-              n = n - 1
-            else
-              break
+          -- Neovim docs: "after the job exits the buffer can be edited like a
+          -- regular buffer". Setting modifiable=true (without touching buftype)
+          -- is sufficient; previous attempts also changed buftype which threw
+          -- an error inside pcall and silently aborted the whole block.
+          pcall(function()
+            vim.bo[bufnr].modifiable = true
+            local n = vim.api.nvim_buf_line_count(bufnr)
+            while n > 0 do
+              local l = vim.api.nvim_buf_get_lines(bufnr, n - 1, n, false)[1] or ''
+              if l == '' or l:find('%[Process exited') then
+                vim.api.nvim_buf_set_lines(bufnr, n - 1, n, false, {})
+                n = n - 1
+              else
+                break
+              end
             end
-          end
-          vim.api.nvim_buf_call(bufnr, function()
-            vim.cmd('setlocal nomodifiable')
+            vim.bo[bufnr].modifiable = false
           end)
-        end)
 
-        if vim.api.nvim_win_is_valid(winid) then
-          vim.api.nvim_win_set_cursor(winid, { 1, 0 })
-        end
-        vim.keymap.set('n', 'q',     close, { buffer = bufnr, noremap = true })
-        vim.keymap.set('n', '<Esc>', close, { buffer = bufnr, noremap = true })
-        vim.cmd('stopinsert')
-      end)
+          if vim.api.nvim_win_is_valid(winid) then
+            vim.api.nvim_win_set_cursor(winid, { 1, 0 })
+          end
+          vim.keymap.set('n', 'q',     close, { buffer = bufnr, noremap = true })
+          vim.keymap.set('n', '<Esc>', close, { buffer = bufnr, noremap = true })
+          vim.cmd('stopinsert')
+        end)
+      end,
+    })
+  end)
+
+  -- Close when focus leaves the chart window.
+  -- {buffer=bufnr} does not reliably match WinLeave for floating windows;
+  -- instead use a global WinLeave, check the window id explicitly, and
+  -- self-delete the autocmd.  vim.schedule defers the close past any
+  -- in-progress nvim_open_win call (which fires WinLeave synchronously and
+  -- would otherwise get "Window was closed immediately" in the new popup).
+  local wl_id
+  wl_id = vim.api.nvim_create_autocmd('WinLeave', {
+    callback = function()
+      if vim.api.nvim_get_current_win() == winid then
+        vim.api.nvim_del_autocmd(wl_id)
+        vim.schedule(close)
+      end
     end,
   })
 
-  vim.api.nvim_create_autocmd('WinLeave', {
-    buffer = bufnr,
-    once = true,
-    callback = close,
-  })
+  -- Enter the window now that everything is set up. BufLeave on any open
+  -- popup fires here (clean state) and the popup unmounts normally.
+  vim.api.nvim_set_current_win(winid)
 end
 
 M.stop = function()
