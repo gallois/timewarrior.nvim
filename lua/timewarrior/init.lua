@@ -71,6 +71,68 @@ local function parse_timew_ts(s)
   )
 end
 
+local function fmt_dur(secs)
+  local h = math.floor(secs / 3600)
+  local m = math.floor((secs % 3600) / 60)
+  return h > 0 and string.format("%dh%02dm", h, m) or string.format("%dm", m)
+end
+
+-- Returns hint unchanged if it is in the allowed list, otherwise returns fallback.
+-- Prevents shell injection when hint is interpolated into shell commands.
+local function validate_hint(hint, allowed, fallback)
+  allowed = allowed or M.range_hints
+  fallback = fallback or "week"
+  for _, h in ipairs(allowed) do
+    if h == hint then return hint end
+  end
+  return fallback
+end
+
+local function half_width(w)
+  if type(w) == "number" then
+    return math.floor(w / 2)
+  end
+  local pct = w:match("^(%d+)%%$")
+  if pct then
+    return math.floor(tonumber(pct) / 2) .. "%"
+  end
+  return w
+end
+
+-- Shared popup factory with sensible defaults. cfg is merged on top of the defaults.
+-- Pass close_q=true to also bind 'q' as a close key.
+-- Returns an unmounted popup; caller is responsible for popup:mount().
+local function make_popup(cfg, close_q)
+  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
+  local popup = Popup(vim.tbl_deep_extend("force", {
+    position = '50%',
+    enter = true,
+    focusable = true,
+    zindex = 10,
+    relative = 'editor',
+    buf_options = { modifiable = true, readonly = false },
+    win_options = {
+      winblend = 10,
+      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
+    },
+    border = {
+      style = "rounded",
+      padding = { top = 1, bottom = 1, left = 1, right = 1 },
+    },
+  }, cfg))
+  popup.border:set_highlight('border')
+  popup:map('n', '<Esc>', function() popup:unmount() end, { noremap = true })
+  if close_q then
+    popup:map('n', 'q', function() popup:unmount() end, { noremap = true })
+  end
+  popup:on(event.BufLeave, function() popup:unmount() end)
+  return popup
+end
+
+local function get_tags_for_range(sorter)
+  return get_command_results("timew tags " .. sorter .. " | awk 'NR > 3 && /.+/ { print $1 }'")
+end
+
 local _status_cache = { tracking_since = nil, tags = "", expires = 0 }
 
 -- Returns a string describing the currently tracked interval, e.g. "work coding (1h23m)".
@@ -105,159 +167,59 @@ M.status = function()
   end
 
   local elapsed = math.max(0, now - _status_cache.tracking_since)
-  local h = math.floor(elapsed / 3600)
-  local m = math.floor((elapsed % 3600) / 60)
-  local duration = h > 0 and string.format("%dh%02dm", h, m) or string.format("%dm", m)
-  return _status_cache.tags .. " (" .. duration .. ")"
+  return _status_cache.tags .. " (" .. fmt_dur(elapsed) .. ")"
 end
 
-local function half_width(w)
-  if type(w) == "number" then
-    return math.floor(w / 2)
-  end
-  local pct = w:match("^(%d+)%%$")
-  if pct then
-    return math.floor(tonumber(pct) / 2) .. "%"
-  end
-  return w
-end
-
-M.summary = function(opts, width, height)
-  local sorter = ':' .. opts
+M.summary = function(opts)
+  local sorter = ':' .. validate_hint(opts)
   local command = { 'timew', 'summary', ':ids', sorter }
 
-  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
-  local popup = Popup({
-    position = '50%',
-    size = {
-      width = width,
-      height = height,
-    },
-    enter = true,
-    focusable = true,
-    zindex = 10,
-    relative = 'editor',
-    border = {
-      padding = {
-        top = 1,
-        bottom = 1,
-        left = 1,
-        right = 1,
-      },
-      style = "rounded",
-      text = {
-        top = " Summary ",
-        top_align = "center",
-        bottom_align = "left",
-        bottom = NuiText("<Esc|q> exit", "Error"),
-      },
-    },
-    buf_options = {
-      modifiable = true,
-      readonly = false,
-    },
-    win_options = {
-      winblend = 10,
-      wrap = false,
-      linebreak = false,
-      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-    },
-  })
-
-  popup.border:set_highlight('border')
-
-  popup:map('n', '<Esc>', function()
-    popup:unmount()
-  end, { noremap = true })
-
-  popup:map('n', 'q', function()
-    popup:unmount()
-  end, { noremap = true })
-
+  local popup = make_popup({
+    size = { width = M.config.size.width, height = M.config.size.height },
+    border = { text = {
+      top = " Summary ",
+      top_align = "center",
+      bottom = NuiText("<Esc|q> exit", "Error"),
+      bottom_align = "left",
+    }},
+    win_options = { wrap = false, linebreak = false },
+  }, true)
   popup:mount()
-
-  popup:on(event.BufLeave, function()
-    popup:unmount()
-  end)
 
   vim.fn.jobstart(command, {
     stdout_buffered = true,
     on_stdout = function(_, data)
-      local to_buf = {}
       if data then
-        for _, v in ipairs(data) do
-          if v ~= "" then
-            table.insert(to_buf, v)
-          end
-        end
+        local to_buf = vim.tbl_filter(function(v) return v ~= "" end, data)
         vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, to_buf)
-        vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
+        vim.bo[popup.bufnr].modifiable = false
       end
     end,
   })
 end
 
-M.tags = function(opts, width, height)
-  local sorter = ':' .. opts
-  local command = "timew tags " .. sorter .. " | awk 'NR > 3 && /.+/ { print $1 }'"
-  local lines = get_command_results(command)
+M.tags = function(opts)
+  local sorter = ':' .. validate_hint(opts)
+  local lines = get_tags_for_range(sorter)
 
-  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
-  local popup = Popup({
-    position = '50%',
-    size = {
-      width = width,
-      height = height,
-    },
-    enter = true,
-    focusable = true,
-    zindex = 10,
-    relative = 'editor',
-    border = {
-      padding = {
-        top = 1,
-        bottom = 1,
-        left = 1,
-        right = 1,
-      },
-      style = "rounded",
-      text = {
-        top = " Tags ",
-        top_align = "center",
-        bottom_align = "left",
-        bottom = NuiText("<Esc> exit", "Error"),
-      },
-    },
-    buf_options = {
-      modifiable = true,
-      readonly = false,
-    },
-    win_options = {
-      winblend = 10,
-      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-    },
+  local popup = make_popup({
+    size = { width = half_width(M.config.size.width), height = M.config.size.height },
+    border = { text = {
+      top = " Tags ",
+      top_align = "center",
+      bottom = NuiText("<Esc> exit", "Error"),
+      bottom_align = "left",
+    }},
   })
-
-  popup.border:set_highlight('border')
-
-  popup:map('n', '<Esc>', function()
-    popup:unmount()
-  end, { noremap = true })
-
   popup:mount()
 
-  popup:on(event.BufLeave, function()
-    popup:unmount()
-  end)
-
   vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
+  vim.bo[popup.bufnr].modifiable = false
 end
 
 M.track_tag = function(opts)
-  local sorter = ':' .. opts
-  local command = "timew tags " .. sorter .. " | awk 'NR > 3 && /.+/ { print $1 }'"
-  local tags = get_command_results(command)
+  local sorter = ':' .. validate_hint(opts)
+  local tags = get_tags_for_range(sorter)
 
   pickers.new({}, {
     prompt_title = "tags",
@@ -317,7 +279,8 @@ M.track = function()
 end
 
 M.week = function(opts)
-  local sorter = ':' .. (opts or 'week')
+  opts = opts or 'week'
+  local sorter = ':' .. validate_hint(opts)
   local data_raw = vim.fn.system({ "timew", "export", sorter })
   local ok, data = pcall(vim.fn.json_decode, data_raw)
   if not ok or type(data) ~= "table" then
@@ -348,12 +311,6 @@ M.week = function(opts)
   if total_secs == 0 then
     vim.notify("timewarrior.nvim: no completed intervals in range", vim.log.levels.WARN)
     return
-  end
-
-  local function fmt_dur(secs)
-    local h = math.floor(secs / 3600)
-    local m = math.floor((secs % 3600) / 60)
-    return h > 0 and string.format("%dh%02dm", h, m) or string.format("%dm", m)
   end
 
   local sorted_tags = {}
@@ -401,48 +358,24 @@ M.week = function(opts)
     end
   end
 
-  local popup_height = #lines
-
-  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
-  local popup = Popup({
-    position = '50%',
-    size = { width = popup_width, height = popup_height },
-    enter = true,
-    focusable = true,
-    zindex = 10,
-    relative = 'editor',
-    border = {
-      padding = { top = 1, bottom = 1, left = 1, right = 1 },
-      style = "rounded",
-      text = {
-        top = " " .. opts .. " summary ",
-        top_align = "center",
-        bottom = NuiText("<Esc|q> exit", "Error"),
-        bottom_align = "left",
-      },
-    },
-    buf_options = { modifiable = true, readonly = false },
-    win_options = {
-      winblend = 10,
-      wrap = false,
-      linebreak = false,
-      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-    },
-  })
-
-  popup.border:set_highlight('border')
-  popup:map('n', '<Esc>', function() popup:unmount() end, { noremap = true })
-  popup:map('n', 'q', function() popup:unmount() end, { noremap = true })
+  local popup = make_popup({
+    size = { width = popup_width, height = #lines },
+    border = { text = {
+      top = " " .. opts .. " summary ",
+      top_align = "center",
+      bottom = NuiText("<Esc|q> exit", "Error"),
+      bottom_align = "left",
+    }},
+    win_options = { wrap = false, linebreak = false },
+  }, true)
   popup:mount()
-  popup:on(event.BufLeave, function() popup:unmount() end)
 
   vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
+  vim.bo[popup.bufnr].modifiable = false
 end
 
 M.chart = function(opts)
-  local chart_type = opts or "week"
-  local cmd = "timew " .. chart_type
+  local chart_type = validate_hint(opts or "week", { "day", "week", "month" }, "week")
 
   local width = vim.o.columns - 4
   local height = math.min(vim.o.lines - 4, 24)
@@ -473,7 +406,7 @@ M.chart = function(opts)
     end
   end
 
-  vim.fn.termopen(cmd, {
+  vim.fn.termopen("timew " .. chart_type, {
     on_exit = function()
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(bufnr) then return end
@@ -539,60 +472,18 @@ local function on_save_edit_time_action(bufnr, index, modify)
 end
 
 local function error_popup(content)
-  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
-  local popup = Popup({
-    position = '50%',
-    size = {
-      width = "80%",
-      height = 1,
-    },
-    enter = true,
-    focusable = true,
-    zindex = 10,
-    relative = 'editor',
-    border = {
-      padding = {
-        top = 1,
-        bottom = 1,
-        left = 1,
-        right = 1,
-      },
-      style = "rounded",
-      text = {
-        top = "Error",
-        top_align = "center",
-        bottom_align = "left",
-        bottom = NuiText("<Esc|q> exit", "Normal"),
-      },
-    },
-    buf_options = {
-      modifiable = true,
-      readonly = false,
-    },
-    win_options = {
-      winblend = 10,
-      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-    },
-  })
-
-  popup.border:set_highlight('border')
-
-  popup:map('n', '<Esc>', function()
-    popup:unmount()
-  end, { noremap = true })
-
-  popup:map('n', 'q', function()
-    popup:unmount()
-  end, { noremap = true })
-
+  local popup = make_popup({
+    size = { width = "80%", height = 1 },
+    border = { text = {
+      top = "Error",
+      top_align = "center",
+      bottom = NuiText("<Esc|q> exit", "Normal"),
+      bottom_align = "left",
+    }},
+  }, true)
   popup:mount()
-
-  popup:on(event.BufLeave, function()
-    popup:unmount()
-  end)
-
   vim.api.nvim_buf_set_lines(popup.bufnr, 0, 1, false, vim.split(content, "\n"))
-  vim.api.nvim_buf_set_option(popup.bufnr, 'modifiable', false)
+  vim.bo[popup.bufnr].modifiable = false
 end
 
 local function edit_time(content, modify)
@@ -606,77 +497,29 @@ local function edit_time(content, modify)
     return
   end
 
-  vim.api.nvim_set_hl(0, 'border', { fg = "#dadada" })
-  local popup = Popup({
-    position = '50%',
-    size = {
-      width = "50%",
-      height = 1,
-    },
-    enter = true,
-    focusable = true,
-    zindex = 10,
-    relative = 'editor',
-    border = {
-      padding = {
-        top = 1,
-        bottom = 1,
-        left = 1,
-        right = 1,
-      },
-      style = "rounded",
-      text = {
-        top = " Edit entry: " .. index .. " [" .. tags .. "]",
-        top_align = "center",
-        bottom_align = "left",
-        bottom = NuiText("<Esc> exit | <C-s> save", "Normal"),
-      },
-    },
-    buf_options = {
-      modifiable = true,
-      readonly = false,
-    },
-    win_options = {
-      winblend = 10,
-      winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-    },
+  local popup = make_popup({
+    size = { width = "50%", height = 1 },
+    border = { text = {
+      top = " Edit entry: " .. index .. " [" .. tags .. "]",
+      top_align = "center",
+      bottom = NuiText("<Esc> exit | <C-s> save", "Normal"),
+      bottom_align = "left",
+    }},
   })
-
-  popup.border:set_highlight('border')
-
-  popup:map('n', '<Esc>', function()
-    popup:unmount()
-  end, { noremap = true })
-
   popup:map('n', '<C-s>', function()
     on_save_edit_time_action(popup.bufnr, index, modify)
     popup:unmount()
   end, { noremap = true })
-
   popup:mount()
+
   local timestamp = (modify == "start" and timestamp_start or timestamp_end)
   vim.api.nvim_buf_set_lines(popup.bufnr, 0, -1, false, vim.split(timestamp, "\n"))
-
-  popup:on(event.BufLeave, function()
-    popup:unmount()
-  end)
-end
-
-local function split_str(inputstr, sep)
-  if sep == nil then
-    sep = "%s"
-  end
-  local t = {}
-  for str in string.gmatch(inputstr, "([^" .. sep .. "]+)") do
-    table.insert(t, str)
-  end
-  return t
 end
 
 local function select_start_end(content)
   local Menu = require("nui.menu")
 
-  local t = split_str(content)
+  local t = vim.split(content, "%s+", { trimempty = true })
   local all_tags = table.concat(t, " ", 5)
 
   local menu = Menu({
@@ -720,7 +563,7 @@ local function select_start_end(content)
 end
 
 M.edit = function(opts)
-  local sorter = ':' .. opts
+  local sorter = ':' .. validate_hint(opts)
 
   local function is_gnu_date()
     local handle = io.popen("date --version 2>/dev/null")
@@ -732,16 +575,18 @@ M.edit = function(opts)
     return result ~= nil and result:find("GNU coreutils") ~= nil
   end
 
+  local gnu_date = is_gnu_date()
+
   local jq_cmd =
   [[ | jq -r '.[] | "@\(.id) \(.start[0:4] + "-" + .start[4:6] + "-" + .start[6:11] + ":" + .start[11:13] + ":" + .start[13:15]) \(.end[0:4] + "-" + .end[4:6] + "-" + .end[6:11] + ":" + .end[11:13] + ":" + .end[13:15]) \(.tags | join(" "))"']]
 
   local awk_script = [[awk '{
-    cmd2 = "]] .. (is_gnu_date()
+    cmd2 = "]] .. (gnu_date
     and [[date -d \"" $2 " UTC\" +\"%Y-%m-%dT%H:%M:%S\"]]
-    or [[date -j -f \"%Y-%m-%dT%H:%M:%S %z\" \"" $2 " +0000\" +\"%Y-%m-%dT%H:%M:%S\"]]) .. [[";
-    cmd3 = "]] .. (is_gnu_date()
+    or  [[date -j -f \"%Y-%m-%dT%H:%M:%S %z\" \"" $2 " +0000\" +\"%Y-%m-%dT%H:%M:%S\"]]) .. [[";
+    cmd3 = "]] .. (gnu_date
     and [[date -d \"" $3 " UTC\" +\"%Y-%m-%dT%H:%M:%S\"]]
-    or [[date -j -f \"%Y-%m-%dT%H:%M:%S %z\" \"" $3 " +0000\" +\"%Y-%m-%dT%H:%M:%S\"]]) .. [[ || echo \"-\"";
+    or  [[date -j -f \"%Y-%m-%dT%H:%M:%S %z\" \"" $3 " +0000\" +\"%Y-%m-%dT%H:%M:%S\"]]) .. [[ || echo \"-\"";
     cmd2 | getline local2;
     close(cmd2);
     cmd3 | getline local3;
@@ -749,8 +594,7 @@ M.edit = function(opts)
     printf "%-5s %s - %-22s %s\n", $1, local2, local3, $4
    }']]
 
-  local full_cmd = jq_cmd .. " | " .. awk_script
-  local command = "timew export " .. sorter .. full_cmd .. " 2> /dev/null"
+  local command = "timew export " .. sorter .. jq_cmd .. " | " .. awk_script .. " 2> /dev/null"
 
   local entries = get_command_results(command)
   table.sort(entries, function(a, b)
@@ -808,7 +652,7 @@ M.edit = function(opts)
         local confirm = vim.fn.confirm("Delete entry " .. index .. "?", "&Yes\n&No", 2)
         if confirm == 1 then
           vim.fn.system({ "timew", "delete", index, ":yes" })
-          print("Deleted " .. index)
+          vim.notify("Deleted " .. index, vim.log.levels.INFO, { title = "Timewarrior" })
         end
       end)
 
@@ -821,9 +665,8 @@ M.setup = function(opts)
   if opts then
     M.config = vim.tbl_deep_extend("force", M.config, opts)
   end
-  vim.api.nvim_create_user_command("TimewSummary", function(opts)
-    local hint = opts.fargs[1] and opts.fargs[1] or M.config.summary_hint
-    M.summary(hint, M.config.size.width, M.config.size.height)
+  vim.api.nvim_create_user_command("TimewSummary", function(o)
+    M.summary(o.fargs[1] or M.config.summary_hint)
   end, {
     nargs = '?',
     complete = function(_, _, _)
@@ -831,9 +674,8 @@ M.setup = function(opts)
     end,
   })
 
-  vim.api.nvim_create_user_command("TimewTags", function(opts)
-    local hint = opts.fargs[1] and opts.fargs[1] or M.config.tags_hint
-    M.tags(hint, half_width(M.config.size.width), M.config.size.height)
+  vim.api.nvim_create_user_command("TimewTags", function(o)
+    M.tags(o.fargs[1] or M.config.tags_hint)
   end, {
     nargs = '?',
     complete = function(_, _, _)
@@ -841,9 +683,8 @@ M.setup = function(opts)
     end,
   })
 
-  vim.api.nvim_create_user_command("TimewTrackTag", function(opts)
-    local hint = opts.fargs[1] and opts.fargs[1] or M.config.tags_hint
-    M.track_tag(hint)
+  vim.api.nvim_create_user_command("TimewTrackTag", function(o)
+    M.track_tag(o.fargs[1] or M.config.tags_hint)
   end, {
     nargs = '?',
     complete = function(_, _, _)
@@ -863,9 +704,8 @@ M.setup = function(opts)
     M.continue()
   end, {})
 
-  vim.api.nvim_create_user_command("TimewEdit", function(opts)
-    local hint = opts.fargs[1] and opts.fargs[1] or M.config.edit_hint
-    M.edit(hint)
+  vim.api.nvim_create_user_command("TimewEdit", function(o)
+    M.edit(o.fargs[1] or M.config.edit_hint)
   end, {
     nargs = '?',
     complete = function(_, _, _)
@@ -873,17 +713,15 @@ M.setup = function(opts)
     end,
   })
 
-  vim.api.nvim_create_user_command("TimewChart", function(opts)
-    local hint = opts.fargs[1] or "week"
-    M.chart(hint)
+  vim.api.nvim_create_user_command("TimewChart", function(o)
+    M.chart(o.fargs[1] or "week")
   end, {
     nargs = '?',
     complete = function() return { "day", "week", "month" } end,
   })
 
-  vim.api.nvim_create_user_command("TimewWeek", function(opts)
-    local hint = opts.fargs[1] and opts.fargs[1] or M.config.summary_hint
-    M.week(hint)
+  vim.api.nvim_create_user_command("TimewWeek", function(o)
+    M.week(o.fargs[1] or M.config.summary_hint)
   end, {
     nargs = '?',
     complete = function(_, _, _)
